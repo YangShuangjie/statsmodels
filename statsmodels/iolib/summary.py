@@ -324,7 +324,8 @@ def summary_top(results, title=None, gleft=None, gright=None, yname=None, xname=
     if gen_left is None:
         #default: General part of the summary table, Applicable to all? models
         gen_left = [('Dep. Variable:', None),
-                    ('Model type:', None),
+#                     ('Model type:', None),
+                    ('Model:', None),
                     ('Date:', None),
                     ('No. Observations:', None),
                     ('Df model:', None),
@@ -474,9 +475,11 @@ def summary_params(results, yname=None, xname=None, alpha=.05, use_t=True,
                        [forg(std_err[i]) for i in exog_idx],
                        [forg(tvalues[i]) for i in exog_idx],
                        ["%#6.3f" % (pvalues[i]) for i in exog_idx],
-                       [forg(conf_int[i,0]) for i in exog_idx],
-                       [forg(conf_int[i,1]) for i in exog_idx]
-                      )
+#                        [forg(conf_int[i,0]) for i in exog_idx],
+#                        [forg(conf_int[i,1]) for i in exog_idx]
+                       [forg(conf_int.iloc[i,0]) for i in exog_idx],
+                       [forg(conf_int.iloc[i,1]) for i in exog_idx]           
+					  )
     parameter_table = SimpleTable(params_data,
                                   param_header,
                                   params_stubs,
