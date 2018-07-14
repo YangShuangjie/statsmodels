@@ -228,7 +228,30 @@ class Summary(object):
         out = '\\begin{table}', title, tab, '\\end{table}'
         out = '\n'.join(out)
         return out
-
+    # Added the output method based on pd.DataFrame().to_excel/csv(). 
+    # Merged  the results when they are output, mainly in order to make 
+    #  the output be distinguishable and more beautiful when printing. 
+    #  Maybe there are other better ways.
+    def to_excel(self,path=None):
+        tables = self.tables
+        import  os
+        cwd = os.getcwd()
+        if path:
+            path = path 
+        else:
+            path = cwd + '\\summary_results.xlsx'
+        summ_df = pd.concat(tables,axis=0)
+        return summ_df.to_excel(path)
+    def to_csv(self,path=None):
+        tables = self.tables
+        import  os
+        cwd = os.getcwd()
+        if  path:
+            path = path 
+        else:
+            path = cwd + '\\summary_results.csv'
+        summ_df = pd.concat(tables,axis=0)
+        return summ_df.to_csv(path)
 
 def _measure_tables(tables, settings):
     '''Compare width of ascii tables in a list and calculate padding values.
@@ -238,21 +261,34 @@ def _measure_tables(tables, settings):
     '''
 
     simple_tables = _simple_tables(tables, settings)
-    tab = [x.as_text() for x in simple_tables]
+    #Bug1: If tables or settings is an empty list, 
+             # then _simple_tables() will return [].
+             # that means length is also empty , 
+             # so max() will raise an error. 
+    #Bug2: If table[i] just has one column, '/nsep' will raise ZeroDivisionError. 
+             # So added exception capture codes.
 
-    length = [len(x.splitlines()[0]) for x in tab]
-    len_max = max(length)
-    pad_sep = []
-    pad_index = []
+    if simple_tables == []:
+        len_max = 0
+        pad_sep = None
+        pad_index = None
+    else:
+        tab = [x.as_text() for x in simple_tables]
+        length = [len(x.splitlines()[0]) for x in tab]
+        len_max = max(length)
+        pad_sep = []
+        pad_index = []
+        for i in range(len(tab)):
+            nsep = tables[i].shape[1] - 1
+            try:
+                pad = int((len_max - length[i]) / nsep)
+            except (ZeroDivisionError):
+                pad = int((len_max - length[i]))
+            pad_sep.append(pad)
+            len_new = length[i] + nsep * pad
+            pad_index.append(len_max - len_new)
 
-    for i in range(len(tab)):
-        nsep = max(tables[i].shape[1] - 1, 1)
-        pad = int((len_max - length[i]) / nsep)
-        pad_sep.append(pad)
-        len_new = length[i] + nsep * pad
-        pad_index.append(len_max - len_new)
-
-    return pad_sep, pad_index, max(length)
+    return pad_sep, pad_index, len_max
 
 
 # Useful stuff
@@ -273,10 +309,13 @@ def summary_model(results):
         now = datetime.datetime.now()
         return now.strftime('%Y-%m-%d %H:%M')
     info = OrderedDict()
+    # Added some informations of  Panel regression from the package linearmodels. 
+    # Panel regression has some different attribute names, but it doesn't matter here.
     info['Model:'] = lambda x: x.model.__class__.__name__
     info['Model Family:'] = lambda x: x.family.__class.__name__
     info['Link Function:'] = lambda x: x.family.link.__class__.__name__
     info['Dependent Variable:'] = lambda x: x.model.endog_names
+    info['Dependent Variable:'] = lambda x: x.model.dependent.vars[0]
     info['Date:'] = time_now
     info['No. Observations:'] = lambda x: "%#6d" % x.nobs
     info['Df Model:'] = lambda x: "%#6d" % x.df_model
@@ -287,19 +326,25 @@ def summary_model(results):
     info['Norm:'] = lambda x: x.fit_options['norm']
     info['Scale Est.:'] = lambda x: x.fit_options['scale_est']
     info['Cov. Type:'] = lambda x: x.fit_options['cov']
+    info['Covariance Type:'] = lambda x: x.cov_type
+    info['Covariance Type:'] = lambda x: x._cov_type
     info['R-squared:'] = lambda x: "%#8.3f" % x.rsquared
     info['Adj. R-squared:'] = lambda x: "%#8.3f" % x.rsquared_adj
     info['Pseudo R-squared:'] = lambda x: "%#8.3f" % x.prsquared
     info['AIC:'] = lambda x: "%8.4f" % x.aic
     info['BIC:'] = lambda x: "%8.4f" % x.bic
     info['Log-Likelihood:'] = lambda x: "%#8.5g" % x.llf
+    info['Log-Likelihood:'] = lambda x: "%#8.5g" % x.loglike
     info['LL-Null:'] = lambda x: "%#8.5g" % x.llnull
     info['LLR p-value:'] = lambda x: "%#8.5g" % x.llr_pvalue
     info['Deviance:'] = lambda x: "%#8.5g" % x.deviance
     info['Pearson chi2:'] = lambda x: "%#6.3g" % x.pearson_chi2
     info['F-statistic:'] = lambda x: "%#8.4g" % x.fvalue
+    info['F-statistic:'] = lambda x: "%#8.4g" % x.f_statistic.stat
     info['Prob (F-statistic):'] = lambda x: "%#6.3g" % x.f_pvalue
+    info['Prob (F-statistic):'] = lambda x: "%#6.3g" % x.f_statistic.pval
     info['Scale:'] = lambda x: "%#8.5g" % x.scale
+    info['Effects:'] = lambda x: ','.join(['%#8s' % i for i in x.included_effects])
     out = OrderedDict()
     for key, func in iteritems(info):
         try:
@@ -341,12 +386,17 @@ def summary_params(results, yname=None, xname=None, alpha=.05, use_t=True,
 
     if isinstance(results, tuple):
         results, params, bse, tvalues, pvalues, conf_int = results
+    #Added Panel results whose some attributes name are different.
+    elif isinstance(results,res_tuple):
+        bse = results.std_errors
+        tvalues = results.tstats
+        conf_int = results.conf_int(1-alpha)
     else:
-        params = results.params
         bse = results.bse
         tvalues = results.tvalues
-        pvalues = results.pvalues
-        conf_int = results.conf_int(alpha)
+        conf_int = results.conf_int(alpha) 
+    params = results.params
+    pvalues = results.pvalues
 
     data = np.array([params, bse, tvalues, pvalues]).T
     data = np.hstack([data, conf_int])
@@ -361,79 +411,156 @@ def summary_params(results, yname=None, xname=None, alpha=.05, use_t=True,
 
     if not xname:
         try:
-            data.index = results.model.data.param_names
-        except AttributeError:
             data.index = results.model.exog_names
+        except (AttributeError):
+            data.index = results.model.exog.vars
     else:
         data.index = xname
 
     return data
 
+# The following function just can stack standard errors,but  we
+    #  usually use t statistics in reality. So modified the function to 
+    # support one of standard errors, t or pvalues by parameter 'show'.
 
+    # Bug: There exists different names for intercept item in different models,
+    # for example, an OLS model named it 'Intercept' while 'const' in logit models.
+    # So added a function to uniform the name to facilitate the data merge.
 # Vertical summary instance for multiple models
-def _col_params(result, float_format='%.4f', stars=True):
+def _col_params(result, float_format='%.4f', stars=True,show='t'):
     '''Stack coefficients and standard errors in single column
     '''
 
     # Extract parameters
     res = summary_params(result)
     # Format float
-    for col in res.columns[:2]:
+    # Note that scientific number will be formatted to 'str' type though '%.4f'
+    for col in res.columns[:3]:
         res[col] = res[col].apply(lambda x: float_format % x)
-    # Std.Errors in parentheses
-    res.iloc[:, 1] = '(' + res.iloc[:, 1] + ')'
+    res.iloc[:,3] = np.around(res.iloc[:,3],4)
+    
     # Significance stars
+    # .ix method will be depreciated,so .loc is used.
     if stars:
         idx = res.iloc[:, 3] < .1
-        res.loc[idx, res.columns[0]] = res.loc[idx, res.columns[0]] + '*'
+        res.loc[res.index[idx], res.columns[0]] += '*'
         idx = res.iloc[:, 3] < .05
-        res.loc[idx, res.columns[0]] = res.loc[idx, res.columns[0]] + '*'
+        res.loc[res.index[idx], res.columns[0]] += '*'
         idx = res.iloc[:, 3] < .01
-        res.loc[idx, res.columns[0]] = res.loc[idx, res.columns[0]] + '*'
-    # Stack Coefs and Std.Errors
-    res = res.iloc[:, :2]
+        res.loc[res.index[idx], res.columns[0]] += '*'
+   
+    # Std.Errors or tvalues or  pvalues in parentheses
+    res.iloc[:,3] = res.iloc[:,3].apply(lambda x: float_format % x) # pvalues to str
+    res.iloc[:, 1] = '(' + res.iloc[:, 1] + ')'
+    res.iloc[:, 2] = '(' + res.iloc[:, 2] + ')'
+    res.iloc[:, 3] = '(' + res.iloc[:, 3] + ')'
+
+    # Stack Coefs and Std.Errors or pvalues
+    if show is 't':
+        res = res.iloc[:,[0,2]]
+    elif show is 'se':
+        res = res.iloc[:, :2]
+    elif show is 'p':
+        res = res.iloc[:,[0,3]]
     res = res.stack()
     res = pd.DataFrame(res)
-    res.columns = [str(result.model.endog_names)]
-    return res
+    try:
+        res.columns = [str(result.model.endog_names)]
+    except (AttributeError):
+        res.columns = result.model.dependent.vars
+    
+    # Added the index name transfromation function 
+    # to deal with MultiIndex and single level index.
+    def _Intercept_2const(df):
+        from pandas.core.indexes.multi import MultiIndex
+        if df.index.contains('Intercept'):
+            if isinstance(df.index,MultiIndex):
+                new_index = []
+                for i in df.index.values:
+                    i = list(i)
+                    if 'Intercept' in i:
+                        i[i.index('Intercept')] = 'const'
+                    new_index.append(i)
+                multi_index = lzip(*new_index)
+                df.index = MultiIndex.from_arrays(multi_index)
+            else:
+                index_list = df.index.tolist()
+                idx = index_list.index('Intercept')
+                index_list[idx] = 'const'
+                df.index = index_list
+        return df
+    return _Intercept_2const(res)
 
-
-def _col_info(result, info_dict=None):
+   # Rename the parameter 'info_dict' to 'more_info',which is a list not a dict.
+   # Besides, build a default dict to contain some model information 
+   # from summary_model(), that will be printed by default and 
+   # users can append other statistics by more_info parameter.
+def _col_info(result, more_info=None):
     '''Stack model info in a column
     '''
+    model_info = summary_model(result)
+    default_info_ = OrderedDict()
+    default_info_['Model:'] = lambda x: x.get('Model:')
+    default_info_['No. Observations:'] = lambda x: x.get('No. Observations:')
+    default_info_['R-squared:'] = lambda x: x.get('R-squared:')
+    default_info_['Adj. R-squared:'] = lambda x: x.get('Adj. R-squared:')                    
+    default_info_['Pseudo R-squared:'] = lambda x: x.get('Pseudo R-squared:')
+    default_info_['F-statistic:'] = lambda x: x.get('F-statistic:')
+    default_info_['Covariance Type:'] = lambda x: x.get('Covariance Type:')
+    default_info_['Eeffects:'] = lambda x: x.get('Effects:')
+    default_info_['Covariance Type:'] = lambda x: x.get('Covariance Type:')
 
-    if info_dict is None:
-        info_dict = {}
-    out = []
-    index = []
-    for i in info_dict:
-        if isinstance(info_dict[i], dict):
-            # this is a specific model info_dict, but not for this result...
-            continue
-        try:
-            out.append(info_dict[i](result))
-        except:
-            out.append('')
-        index.append(i)
-    out = pd.DataFrame({str(result.model.endog_names): out}, index=index)
+    default_info = default_info_.copy()
+    for k,v in default_info_.items():
+        if v(model_info):
+            default_info[k] = v(model_info)
+        else:
+            default_info.pop(k) # pop the item whose value is none.
+            
+    if more_info is None:
+        more_info = default_info
+    else:
+        if not isinstance(more_info,list):
+            more_info = [more_info]
+        for i in more_info:
+            try:
+                default_info[i] = getattr(result,i)
+            except (AttributeError, KeyError, NotImplementedError) as e:
+                raise e
+        more_info = default_info
+    try:
+        out = pd.DataFrame(more_info, index=[result.model.endog_names]).T
+    except (AttributeError):
+        out = pd.DataFrame(more_info, index=result.model.dependent.vars).T
     return out
 
-
+   # Non-duplicated names will be add a suffix.
+   # And the time when endog_names duplicate four or more times ,the y 
+   # names will be like 'y IIII' or 'y IIIIII...'.So use the Arabic numerals instead.
 def _make_unique(list_of_names):
     if len(set(list_of_names)) == len(list_of_names):
         return list_of_names
     # pandas does not like it if multiple columns have the same names
     from collections import defaultdict
-    name_counter = defaultdict(str)
-    header = []
-    for _name in list_of_names:
-        name_counter[_name] += "I"
-        header.append(_name+" " + name_counter[_name])
-    return header
+    dic_of_names = defaultdict(list)
+    for i,v in enumerate(list_of_names):
+        dic_of_names[v].append(i)
+    for v in  dic_of_names.values():
+        if len(v)>1:
+            c = 0
+            for i in v:
+                c += 1
+                list_of_names[i] += '_%i' % c
+    return list_of_names
 
-
-def summary_col(results, float_format='%.4f', model_names=(), stars=False,
-                info_dict=None, regressor_order=(), drop_omitted=False):
+   # Added the parameters 'show' and 'title',
+   # and changed the default value of 'stars' into 'True',
+   # Then  changed the dict parameter 'info_dict' as a list one named 'more_info'.
+   # Finally  put 'const'  at the first location by default in regressor_order.
+   # Bug: np.unique() will disrupt the original order of list,
+   # this can result in index confusion.
+def summary_col(results, float_format='%.4f', model_names=[], stars=True,
+                more_info=None, regressor_order=[],drop_omitted=False,show='t',title=None):
     """
     Summarize multiple results instances side-by-side (coefs and SEs)
 
@@ -469,7 +596,7 @@ def summary_col(results, float_format='%.4f', model_names=(), stars=False,
     if not isinstance(results, list):
         results = [results]
 
-    cols = [_col_params(x, stars=stars, float_format=float_format) for x in
+    cols = [_col_params(x, stars=stars, float_format=float_format,show=show) for x in
             results]
 
     # Unique column names (pandas has problems merging otherwise)
@@ -484,49 +611,62 @@ def summary_col(results, float_format='%.4f', model_names=(), stars=False,
                                 left_index=True)
     summ = reduce(merg, cols)
 
-    if regressor_order:
-        varnames = summ.index.get_level_values(0).tolist()
-        ordered = [x for x in regressor_order if x in varnames]
-        unordered = [x for x in varnames if x not in regressor_order + ['']]
-        order = ordered + list(np.unique(unordered))
+    if not regressor_order:
+        regressor_order = ['const']
+    varnames = summ.index.get_level_values(0).tolist()
+    ordered = [x for x in regressor_order if x in varnames]
+    unordered = [x for x in varnames if x not in regressor_order + ['']]
+    # Note: np.unique can disrupt the original order  of list 'unordered'.
+    # pd.Series().unique()  works well.
+    order = ordered + list(pd.Series(unordered).unique())
 
-        f = lambda idx: sum([[x + 'coef', x + 'stde'] for x in idx], [])
-        summ.index = f(pd.unique(varnames))
-        summ = summ.reindex(f(order))
-        summ.index = [x[:-4] for x in summ.index]
-        if drop_omitted:
-            summ = summ.loc[regressor_order]
+    f = lambda idx: sum([[x + 'coef', x + 'stde'] for x in idx], [])
+    summ.index = f(pd.Series(varnames).unique())
+    summ = summ.reindex(f(order))
+    summ.index = [x[:-4] for x in summ.index]
+    if drop_omitted:
+        summ = summ.loc[regressor_order]
 
     idx = pd.Series(lrange(summ.shape[0])) % 2 == 1
     summ.index = np.where(idx, '', summ.index.get_level_values(0))
-
+    summ = summ.fillna('')
+    
     # add infos about the models.
-    if info_dict:
-        cols = [_col_info(x, info_dict.get(x.model.__class__.__name__,
-                                           info_dict)) for x in results]
-    else:
-        cols = [_col_info(x, getattr(x, "default_model_infos", None)) for x in
-                results]
+    cols = [_col_info(x,more_info=more_info) for x in results]
+    
     # use unique column names, otherwise the merge will not succeed
     for df, name in zip(cols, _make_unique([df.columns[0] for df in cols])):
         df.columns = [name]
     merg = lambda x, y: x.merge(y, how='outer', right_index=True,
                                 left_index=True)
     info = reduce(merg, cols)
-    dat = pd.DataFrame(np.vstack([summ, info]))  # pd.concat better, but error
-    dat.columns = summ.columns
-    dat.index = pd.Index(summ.index.tolist() + info.index.tolist())
-    summ = dat
+    info.columns = summ.columns
+    info = info.fillna('')
+    
+    if show is 't':
+        note = ['\t t statistics in parentheses.']
+    if show is 'se':
+        note = ['\t Std. error in parentheses.']
+    if show is 'p':
+        note = ['\t pvalues in parentheses.']
+    if stars:
+        note +=  ['\t * p<.1, ** p<.05, ***p<.01']
 
-    summ = summ.fillna('')
+    note_df = pd.DataFrame([ ],index=['note:']+note,columns=summ.columns).fillna('')
 
+    if title is not None:
+        title = str(title)
+    else:
+        title = '\t Results Summary'
+    title_df = pd.DataFrame([],index=[title],columns=summ.columns).fillna('')
+    
     smry = Summary()
     smry._merge_latex = True
+    smry.add_df(title_df,header=False,align='l')
     smry.add_df(summ, header=True, align='l')
-    smry.add_text('Standard errors in parentheses.')
-    if stars:
-        smry.add_text('* p<.1, ** p<.05, ***p<.01')
-
+    smry.add_df(info, header=False, align='l')
+    smry.add_df(note_df, header=False, align='l')
+    
     return smry
 
 
